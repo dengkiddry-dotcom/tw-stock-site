@@ -1,0 +1,66 @@
+export default async function handler(req, res) {
+  const { code } = req.query;
+
+  if (!code) {
+    return res.status(400).json({ error: "缺少股票代碼 code" });
+  }
+
+  const marketCandidates = [`tse_${code}.tw`, `otc_${code}.tw`];
+
+  try {
+    for (const ex of marketCandidates) {
+      const url = `https://mis.twse.com.tw/stock/api/getStockInfo.jsp?ex_ch=${ex}&json=1&delay=0&_=${Date.now()}`;
+
+      const response = await fetch(url, {
+        headers: {
+          Accept: "application/json, text/plain, */*",
+          "User-Agent": "Mozilla/5.0"
+        }
+      });
+
+      if (!response.ok) continue;
+
+      const data = await response.json();
+      const raw = data?.msgArray?.[0];
+
+      if (raw?.n) {
+        const latest = Number(raw.z);
+        const previousClose = Number(raw.y);
+        const fallbackPrice = Number(raw.b?.split("_")?.[0]);
+
+        const price = Number.isFinite(latest) && latest > 0
+          ? latest
+          : (Number.isFinite(fallbackPrice) ? fallbackPrice : null);
+
+        const change = price !== null && Number.isFinite(previousClose)
+          ? price - previousClose
+          : null;
+
+        const changePct = price !== null && Number.isFinite(previousClose) && previousClose !== 0
+          ? (change / previousClose) * 100
+          : null;
+
+        return res.status(200).json({
+          code,
+          name: raw.n || `台股 ${code}`,
+          price,
+          change,
+          changePct,
+          open: Number(raw.o),
+          high: Number(raw.h),
+          low: Number(raw.l),
+          previousClose,
+          volume: Number(raw.v),
+          source: "TWSE realtime API via Vercel proxy"
+        });
+      }
+    }
+
+    return res.status(404).json({ error: "查無此股票代碼或即時資料" });
+  } catch (error) {
+    return res.status(500).json({
+      error: "後端代理抓取失敗",
+      detail: error.message
+    });
+  }
+}

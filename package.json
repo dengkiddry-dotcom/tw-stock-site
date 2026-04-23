@@ -1,0 +1,231 @@
+import { useMemo, useState } from "react";
+
+const fallbackFundamentals = {
+  "2330": {
+    sector: "半導體",
+    pe: 24.8,
+    pb: 6.7,
+    dividendYield: 1.7,
+    roe: 28.4,
+    revenueYoY: 21.6,
+    foreignHoldingTrend: "up",
+    riskLevel: "medium",
+    sentiment: 78,
+  },
+  "2317": {
+    sector: "電子製造",
+    pe: 14.2,
+    pb: 1.6,
+    dividendYield: 4.1,
+    roe: 11.9,
+    revenueYoY: 9.8,
+    foreignHoldingTrend: "flat",
+    riskLevel: "medium",
+    sentiment: 61,
+  },
+  "2454": {
+    sector: "IC 設計",
+    pe: 20.5,
+    pb: 4.4,
+    dividendYield: 3.5,
+    roe: 22.1,
+    revenueYoY: 16.2,
+    foreignHoldingTrend: "up",
+    riskLevel: "medium",
+    sentiment: 74,
+  },
+};
+
+function formatNumber(value, digits = 2) {
+  if (value === null || value === undefined || Number.isNaN(Number(value))) return "--";
+  return Number(value).toFixed(digits);
+}
+
+function scoreStock(stock, strategy) {
+  if (!stock) return null;
+
+  let score = 50;
+  if ((stock.revenueYoY ?? 0) > 15) score += 12;
+  else if ((stock.revenueYoY ?? 0) > 5) score += 6;
+  else score -= 6;
+
+  if ((stock.roe ?? 0) > 20) score += 12;
+  else if ((stock.roe ?? 0) > 10) score += 6;
+  else score -= 6;
+
+  if ((stock.dividendYield ?? 0) >= 4) score += 10;
+  else if ((stock.dividendYield ?? 0) >= 2) score += 5;
+
+  if ((stock.pe ?? 99) < 15) score += 8;
+  else if ((stock.pe ?? 0) > 28) score -= 8;
+
+  if (stock.foreignHoldingTrend === "up") score += 8;
+  if (stock.foreignHoldingTrend === "flat") score += 2;
+  if (stock.foreignHoldingTrend === "down") score -= 8;
+
+  if ((stock.changePct ?? 0) > 2) score += 4;
+  else if ((stock.changePct ?? 0) < -2) score -= 4;
+
+  if (strategy === "growth") {
+    if ((stock.revenueYoY ?? 0) > 15) score += 8;
+    if ((stock.roe ?? 0) > 20) score += 6;
+  }
+
+  if (strategy === "value") {
+    if ((stock.pe ?? 99) < 15) score += 10;
+    if ((stock.pb ?? 99) < 2) score += 8;
+  }
+
+  if (strategy === "income") {
+    if ((stock.dividendYield ?? 0) >= 4) score += 12;
+    if ((stock.pb ?? 99) < 2) score += 4;
+  }
+
+  score = Math.max(0, Math.min(100, score));
+
+  let rating = "中立觀察";
+  let advice = "建議持續追蹤營收、估值與市場情緒變化，再決定是否進一步觀察。";
+
+  if (score >= 80) {
+    rating = "偏多看待";
+    advice = "整體條件相對穩健，可列入重點觀察，但仍應留意風險控管與資金配置。";
+  } else if (score >= 65) {
+    rating = "可列入觀察名單";
+    advice = "條件尚可，可持續追蹤估值與市場氣氛，等待更佳觀察點。";
+  } else if (score < 45) {
+    rating = "保守因應";
+    advice = "目前風險報酬比不佳，宜保守觀察，不宜追價。";
+  }
+
+  return { score, rating, advice };
+}
+
+export default function App() {
+  const [code, setCode] = useState("2330");
+  const [strategy, setStrategy] = useState("growth");
+  const [stock, setStock] = useState(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
+
+  const result = useMemo(() => scoreStock(stock, strategy), [stock, strategy]);
+
+  const handleAnalyze = async () => {
+    const cleanCode = code.trim();
+    if (!cleanCode) return;
+
+    setLoading(true);
+    setError("");
+    setStock(null);
+
+    try {
+      const res = await fetch(`/api/quote?code=${encodeURIComponent(cleanCode)}`);
+      const json = await res.json();
+
+      if (!res.ok) {
+        throw new Error(json.error || "查詢失敗");
+      }
+
+      const base = fallbackFundamentals[cleanCode] || {};
+      setStock({ ...json, ...base, code: cleanCode });
+      setLastUpdated(new Date().toLocaleString("zh-TW"));
+    } catch (err) {
+      setError(err.message || "Failed to fetch");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="container">
+      <div className="hero">
+        <h1>台灣股票分析平台</h1>
+        <p className="subtitle">整合即時股價、基本面摘要與策略偏好，輸出簡明的分析判讀與參考建議。</p>
+        <div className="toolbar">
+          <input value={code} onChange={(e) => setCode(e.target.value)} placeholder="輸入台股代碼，例如 2330" />
+          <select value={strategy} onChange={(e) => setStrategy(e.target.value)}>
+            <option value="growth">成長型</option>
+            <option value="value">價值型</option>
+            <option value="income">股息型</option>
+          </select>
+          <button onClick={handleAnalyze} disabled={loading}>{loading ? "讀取中" : "分析"}</button>
+        </div>
+      </div>
+
+      <div className="layout">
+        <div>
+          {!stock && !loading && error && (
+            <div className="card error">
+              <h2>找不到資料</h2>
+              <p>{error}</p>
+            </div>
+          )}
+
+          {!stock && !loading && !error && (
+            <div className="card">
+              <h2>開始查詢</h2>
+              <p className="muted">輸入台股代碼後按下分析，即可透過後端代理查詢即時股價。</p>
+            </div>
+          )}
+
+          {loading && (
+            <div className="card">
+              <h2>資料讀取中</h2>
+              <p className="muted">正在查詢 {code} 的即時股價資料。</p>
+            </div>
+          )}
+
+          {stock && (
+            <div className="card">
+              <div className="stock-title">
+                <h2 style={{ margin: 0 }}>{stock.name}</h2>
+                <span className="badge">{stock.code}</span>
+                <span className="badge">{stock.sector || "未分類"}</span>
+              </div>
+              <div className="price">{formatNumber(stock.price, 2)}</div>
+              <div className={(stock.change ?? 0) >= 0 ? "up" : "down"}>
+                {stock.change !== null && stock.change !== undefined ? `${stock.change >= 0 ? "+" : ""}${formatNumber(stock.change, 2)}` : "--"}
+                {" "}
+                ({stock.changePct !== null && stock.changePct !== undefined ? `${stock.changePct >= 0 ? "+" : ""}${formatNumber(stock.changePct, 2)}%` : "--"})
+              </div>
+              <p className="muted">來源：{stock.source} {lastUpdated ? `｜最後更新：${lastUpdated}` : ""}</p>
+
+              <div className="grid">
+                <div className="metric"><div className="label">開盤</div><div className="value">{formatNumber(stock.open, 2)}</div></div>
+                <div className="metric"><div className="label">最高 / 最低</div><div className="value">{formatNumber(stock.high, 2)} / {formatNumber(stock.low, 2)}</div></div>
+                <div className="metric"><div className="label">成交量</div><div className="value">{stock.volume ?? "--"}</div></div>
+                <div className="metric"><div className="label">昨收</div><div className="value">{formatNumber(stock.previousClose, 2)}</div></div>
+                <div className="metric"><div className="label">本益比 PE</div><div className="value">{stock.pe ?? "--"}</div></div>
+                <div className="metric"><div className="label">股價淨值比 PB</div><div className="value">{stock.pb ?? "--"}</div></div>
+                <div className="metric"><div className="label">殖利率</div><div className="value">{stock.dividendYield ? `${stock.dividendYield}%` : "--"}</div></div>
+                <div className="metric"><div className="label">ROE</div><div className="value">{stock.roe ? `${stock.roe}%` : "--"}</div></div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="card">
+          <h2 className="side-title">AI 分析判讀</h2>
+          {stock && result ? (
+            <>
+              <div className="score">{result.score}/100</div>
+              <p><strong>{result.rating}</strong></p>
+              <div className="note">{result.advice}</div>
+              <div className="list">
+                <div className="list-item"><span className="muted">市場情緒</span><strong>{stock.sentiment ?? "--"}/100</strong></div>
+                <div className="list-item"><span className="muted">營收年增率</span><strong>{stock.revenueYoY ? `${stock.revenueYoY}%` : "--"}</strong></div>
+                <div className="list-item"><span className="muted">外資趨勢</span><strong>{stock.foreignHoldingTrend === "up" ? "偏多" : stock.foreignHoldingTrend === "down" ? "偏空" : "中性"}</strong></div>
+              </div>
+            </>
+          ) : (
+            <p className="muted">請先輸入個股代碼。</p>
+          )}
+        </div>
+      </div>
+
+      <div className="footer-note">
+        本頁面之分析判讀與參考建議僅供研究與展示用途，不構成個別化投資建議、招攬或保證報酬。即時股價已透過後端代理查詢；PE、PB、ROE、殖利率等基本面欄位目前仍為示意值。
+      </div>
+    </div>
+  );
+}
